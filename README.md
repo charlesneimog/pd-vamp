@@ -15,7 +15,7 @@ This PureData object serves as a host for Vamp plugins, enabling real-time audio
 Before using this PureData object, ensure you have installed the necessary Vamp plugins. You can download them from the Vamp Plugins website.
 
 ## Installation
-Download and install the required Vamp plugins from the Vamp Plugins website.
+Download and install the required Vamp plugins from the Vamp Plugins [website](https://www.vamp-plugins.org/download.html).
 Place the PureData object in your PureData project.
 
 ## License

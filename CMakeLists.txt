@@ -17,7 +17,7 @@ cmake_policy(SET CMP0135 NEW)
 
 option(BUILD_SHARED_LIBS OFF)
 option(BUILD_TESTS OFF)
-option(FFTW_SINGLE ON)
+set(FFTW_SINGLE ON)
 
 set(FFTW3_FILE ${CMAKE_BINARY_DIR}/fftw-3.3.10.tar.gz)
 if(NOT EXISTS ${FFTW3_FILE})
@@ -59,6 +59,11 @@ add_library(
 
 set_target_properties(rt-vamp-plugin-sdk PROPERTIES POSITION_INDEPENDENT_CODE
                                                     ON)
+
+if(WIN32)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive")
+endif()
+
 # ╭──────────────────────────────────────╮
 # │              Pd Object               │
 # ╰──────────────────────────────────────╯
