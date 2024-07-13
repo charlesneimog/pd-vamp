@@ -11,11 +11,39 @@ include(${PDCMAKE_DIR}/pd.cmake)
 project(vamp~)
 
 # ╭──────────────────────────────────────╮
+# │                FFTW3                 │
+# ╰──────────────────────────────────────╯
+cmake_policy(SET CMP0135 NEW)
+
+option(BUILD_SHARED_LIBS OFF)
+option(BUILD_TESTS OFF)
+option(FFTW_SINGLE ON)
+
+set(FFTW3_FILE ${CMAKE_BINARY_DIR}/fftw-3.3.10.tar.gz)
+if(NOT EXISTS ${FFTW3_FILE})
+  message(STATUS "Downloading FFTW3")
+  file(DOWNLOAD https://www.fftw.org/fftw-3.3.10.tar.gz ${FFTW3_FILE})
+endif()
+
+file(ARCHIVE_EXTRACT INPUT ${CMAKE_BINARY_DIR}/fftw-3.3.10.tar.gz DESTINATION
+     ${CMAKE_BINARY_DIR}/Libraries/)
+
+add_subdirectory(${CMAKE_BINARY_DIR}/Libraries/fftw-3.3.10 EXCLUDE_FROM_ALL)
+set_target_properties(fftw3 PROPERTIES LIBRARY_OUTPUT_DIRECTORY
+                                       ${CMAKE_SOURCE_DIR})
+set_target_properties(fftw3 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+include_directories(${CMAKE_BINARY_DIR}/Libraries/fftw-3.3.10/api/)
+
+# ╭──────────────────────────────────────╮
 # │             VAMP RT HOST             │
 # ╰──────────────────────────────────────╯
 include_directories(
   vamp_tilde PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/Libraries/rt-vamp-plugin-sdk/hostsdk/include/")
+
+include_directories(
+  vamp_tilde PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/Libraries/rt-vamp-plugin-sdk/3rdparty/")
 
 set(rt-vamp-host-src
     "${CMAKE_CURRENT_SOURCE_DIR}/Libraries/rt-vamp-plugin-sdk/hostsdk/src/")
@@ -35,4 +63,4 @@ set_target_properties(rt-vamp-plugin-sdk PROPERTIES POSITION_INDEPENDENT_CODE
 # │              Pd Object               │
 # ╰──────────────────────────────────────╯
 pd_add_external(vamp~ Sources/pd-vamp.cpp TARGET vamp_tilde)
-target_link_libraries(vamp_tilde PRIVATE rt-vamp-plugin-sdk fftw3f)
+target_link_libraries(vamp_tilde PRIVATE rt-vamp-plugin-sdk fftw3)

@@ -33,3 +33,4 @@
 .cache/clangd/index
 build
 compile_commands.json
+Libraries/fftw-3.3.10

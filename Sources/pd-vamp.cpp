@@ -23,6 +23,7 @@ class PdVamp {
 
     bool Loaded;
     bool ReportErros = false;
+    bool FrequencyDomain = false;
     unsigned OutputCount = 0;
 
     // FFT
@@ -34,11 +35,11 @@ class PdVamp {
     std::vector<float> inBuffer;
     float Sr;
     int BlockSize;
-    float HopSize;
+    float StepSize;
     int BlockIndex;
 
     t_clock *Clock;
-    t_outlet **Analisys;
+    t_outlet *Analisys;
     t_outlet *Info;
 };
 
@@ -59,6 +60,26 @@ static void GetParameterDescriptors(PdVamp *x) {
         post("Minimum value: %f", p.minValue);
         post("Maximum value: %f", p.maxValue);
         post("");
+        parameterIndex++;
+    }
+    if (parameterIndex == 0) {
+        post("[vamp~] No parameters available!");
+    }
+}
+
+// ─────────────────────────────────────
+static void GetProgramsNames(PdVamp *x) {
+    size_t programIndex = 0;
+    for (auto &&p : x->VampPlugin->getPrograms()) {
+        post("<== Program %d ==>", programIndex);
+        post("Name: %s", p.data());
+        programIndex += 1;
+    }
+    if (x->VampPlugin->getCurrentProgram()) {
+        post("Current Program: %s", x->VampPlugin->getCurrentProgram()->data());
+    }
+    if (programIndex == 0) {
+        post("[vamp~] No programs available!");
     }
 }
 
@@ -70,10 +91,8 @@ static void ListVampPlugins(PdVamp *x) {
             try {
                 const auto Plugin = loadPlugin(key, 48000);
                 std::string Name = Plugin->getName().data();
-                t_atom a[2];
-                SETSYMBOL(&a[0], gensym(Id.c_str()));
-                SETSYMBOL(&a[1], gensym(Name.c_str()));
-                post("Plugin %s: %s", Id.c_str(), Name.c_str());
+                std::string Description = Plugin->getDescription().data();
+                post("'%s': %s | %s", Id.c_str(), Name.c_str(), Description.c_str());
             } catch (const std::exception &e) {
                 if (x->ReportErros) {
                     pd_error(nullptr, "Error loading plugin %s: %s", Id.c_str(), e.what());
@@ -84,33 +103,25 @@ static void ListVampPlugins(PdVamp *x) {
 }
 
 // ─────────────────────────────────────
-static void LoadVampPlugin(PdVamp *x, t_symbol *s) {
-    std::string Id = s->s_name;
-    x->VampPlugin = loadPlugin(Id, x->Sr);
-    x->VampPlugin->initialise(x->HopSize, x->HopSize);
-    x->OutputCount = x->VampPlugin->getOutputCount();
-    x->Outputs = x->VampPlugin->getOutputDescriptors();
-    if (x->OutputCount == 0) {
-        pd_error(nullptr, "Plugin %s does not have any output", Id.c_str());
-        return;
-    }
-    x->Loaded = true;
-}
-
-// ─────────────────────────────────────
 static void VampTick(PdVamp *x) {
-    for (unsigned i = 0; i < x->OutputCount; i++) {
-        int Len = x->Features[i].size();
+    if (x->OutputCount == 0) {
+        return;
+    } else if (x->OutputCount > 1) {
+        pd_error(nullptr, "More than one output, use [vamp~ %s] to get the output",
+                 x->VampPlugin->getIdentifier().data());
+        return;
+    } else {
+        int Len = x->Features[0].size();
         if (Len == 0) {
-            continue;
+            return;
         } else if (Len == 1) {
-            outlet_float(x->Analisys[i], x->Features[i][0]);
+            outlet_float(x->Analisys, x->Features[0][0]);
         } else {
             t_atom a[Len];
             for (int j = 0; j < Len; j++) {
-                SETFLOAT(&a[j], x->Features[i][j]);
+                SETFLOAT(&a[j], x->Features[0][j]);
             }
-            outlet_list(x->Analisys[i], nullptr, Len, a);
+            outlet_list(x->Analisys, nullptr, Len, a);
         }
     }
 
@@ -131,24 +142,24 @@ static t_int *VampAudioPerform(t_int *w) { //
     std::copy(x->inBuffer.begin() + n, x->inBuffer.end(), x->inBuffer.begin());
     std::copy(in, in + n, x->inBuffer.end() - n);
 
-    if (x->BlockIndex != x->HopSize) {
+    if (x->BlockIndex != x->StepSize) {
         return (w + 4);
     }
 
-    if (x->VampPlugin->getInputDomain() == Plugin::InputDomain::Frequency) {
+    if (x->FrequencyDomain) {
         for (int i = 0; i < x->BlockSize; i++) {
             x->FFTIn[i] *= 0.5 * (1.0 - std::cos(2.0 * M_PI * i / (x->BlockSize - 1)));
         }
         fftwf_execute(x->FFTPlan);
-        std::vector<std::complex<float>> FFT(x->HopSize);
-        for (int i = 0; i < x->HopSize; i++) {
+        std::vector<std::complex<float>> FFT(x->StepSize);
+        for (int i = 0; i < x->StepSize; i++) {
             FFT[i] = std::complex<float>(x->FFTOut[i][0], x->FFTOut[i][1]);
         }
         x->Features = x->VampPlugin->process(FFT, 0);
 
     } else {
-        TimeDomainBuffer timeBuffer(x->inBuffer.data(), x->inBuffer.size());
-        x->Features = x->VampPlugin->process(timeBuffer, 0);
+        TimeDomainBuffer TimeBuffer(x->inBuffer.data(), x->inBuffer.size());
+        x->Features = x->VampPlugin->process(TimeBuffer, 0);
     }
 
     x->BlockIndex = 0;
@@ -159,7 +170,7 @@ static t_int *VampAudioPerform(t_int *w) { //
 // ─────────────────────────────────────
 static void PdVampAddDsp(PdVamp *x, t_signal **sp) {
     x->BlockIndex = 0;
-    x->inBuffer.resize(x->HopSize, 0.0f);
+    x->inBuffer.resize(x->StepSize, 0.0f);
     dsp_add(VampAudioPerform, 3, x, sp[0]->s_vec, sp[0]->s_n);
 }
 
@@ -176,12 +187,13 @@ void *PdVampNew(t_symbol *s, int argc, t_atom *argv) {
     x->Sr = sys_getsr();
     x->Clock = clock_new(x, (t_method)VampTick);
     x->BlockIndex = 0;
-    x->HopSize = 4096;
+    x->StepSize = 1024;
+    x->BlockSize = 1024;
     x->Loaded = false;
 
-    x->FFTIn = (float *)fftwf_alloc_real(x->HopSize);
-    x->FFTOut = (fftwf_complex *)fftwf_alloc_complex(x->HopSize);
-    x->FFTPlan = fftwf_plan_dft_r2c_1d(x->HopSize, x->FFTIn, x->FFTOut, FFTW_MEASURE);
+    x->FFTIn = (float *)fftwf_alloc_real(x->StepSize);
+    x->FFTOut = (fftwf_complex *)fftwf_alloc_complex(x->StepSize);
+    x->FFTPlan = fftwf_plan_dft_r2c_1d(x->StepSize, x->FFTIn, x->FFTOut, FFTW_MEASURE);
 
     // check if 1 and 2 are symbols
     if (argc != 1) {
@@ -196,29 +208,27 @@ void *PdVampNew(t_symbol *s, int argc, t_atom *argv) {
 
     // Load Plugin
     std::string PluginId = atom_getsymbol(argv)->s_name;
-
     try {
         x->VampPlugin = loadPlugin(PluginId, x->Sr);
-        x->VampPlugin->initialise(x->HopSize, x->HopSize);
-        x->OutputCount = x->VampPlugin->getOutputCount();
-        x->Outputs = x->VampPlugin->getOutputDescriptors();
-        if (x->OutputCount == 0) {
-            pd_error(nullptr, "Plugin %s does not have any output", PluginId.c_str());
-            return nullptr;
-        }
-        x->Analisys = (t_outlet **)getbytes(x->OutputCount * sizeof(t_outlet *));
-        for (unsigned i = 0; i < x->OutputCount; i++) {
-            Plugin::OutputDescriptor p = x->Outputs[i];
-            post("Output %d: %s", i, p.name.data());
-            x->Analisys[i] = outlet_new(&x->x_obj, gensym(p.name.data()));
+        x->VampPlugin->initialise(x->StepSize, x->BlockSize);
+        x->Loaded = true;
+        if (x->VampPlugin->getInputDomain() == Plugin::InputDomain::Frequency) {
+            x->FrequencyDomain = true;
+        } else {
+            x->FrequencyDomain = false;
         }
     } catch (const std::exception &e) {
+        x->Loaded = false;
         pd_error(nullptr, "Error loading plugin %s: %s", PluginId.c_str(), e.what());
         return nullptr;
     }
-
-    x->Loaded = true;
-
+    x->OutputCount = x->VampPlugin->getOutputCount();
+    x->Outputs = x->VampPlugin->getOutputDescriptors();
+    if (x->OutputCount == 0) {
+        pd_error(nullptr, "Plugin %s does not have any output", PluginId.c_str());
+        return nullptr;
+    }
+    x->Analisys = outlet_new(&x->x_obj, &s_anything);
     return x;
 }
 
@@ -228,8 +238,7 @@ extern "C" void vamp_tilde_setup(void) {
                         CLASS_DEFAULT, A_GIMME, A_NULL);
     CLASS_MAINSIGNALIN(VampObj, PdVamp, Sample);
     class_addmethod(VampObj, (t_method)ListVampPlugins, gensym("plugins"), A_NULL);
-    // class_addmethod(VampObj, (t_method)LoadVampPlugin, gensym("load"), A_SYMBOL, A_NULL);
     class_addmethod(VampObj, (t_method)GetParameterDescriptors, gensym("parameters"), A_NULL);
-    // class_addmethod(VampObj, (t_method)GetOutputDescription, gensym("parameters"), A_NULL);
+    class_addmethod(VampObj, (t_method)GetProgramsNames, gensym("program"), A_NULL);
     class_addmethod(VampObj, (t_method)PdVampAddDsp, gensym("dsp"), A_CANT, 0);
 }
