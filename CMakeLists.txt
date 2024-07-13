@@ -22,17 +22,15 @@ set(rt-vamp-host-src
 
 add_library(
   rt-vamp-plugin-sdk
-  $<IF:$<PLATFORM_ID:Windows>,
-  "${rt-vamp-host-src}/DynamicLibrary_Windows.cpp",
-  "${rt-vamp-host-src}/DynamicLibrary_Unix.cpp">
-  "${rt-vamp-host-src}/hostsdk.cpp"
-  "${rt-vamp-host-src}/PluginHostAdapter.cpp"
-  "${rt-vamp-host-src}/PluginKey.cpp"
-  "${rt-vamp-host-src}/PluginLibrary.cpp")
+  $<$<PLATFORM_ID:Windows>:${rt-vamp-host-src}/DynamicLibrary_Windows.cpp>
+  $<$<NOT:$<PLATFORM_ID:Windows>>:${rt-vamp-host-src}/DynamicLibrary_Unix.cpp>
+  ${rt-vamp-host-src}/hostsdk.cpp
+  ${rt-vamp-host-src}/PluginHostAdapter.cpp
+  ${rt-vamp-host-src}/PluginKey.cpp
+  ${rt-vamp-host-src}/PluginLibrary.cpp)
 
 set_target_properties(rt-vamp-plugin-sdk PROPERTIES POSITION_INDEPENDENT_CODE
                                                     ON)
-
 # ╭──────────────────────────────────────╮
 # │              Pd Object               │
 # ╰──────────────────────────────────────╯
