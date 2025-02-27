@@ -44,7 +44,7 @@ class PdVamp {
 };
 
 // ─────────────────────────────────────
-static void GetParameterDescriptors(PdVamp *x) {
+static void vamp_getparameters(PdVamp *x) {
     size_t parameterIndex = 0;
     for (auto &&p : x->VampPlugin->getParameterDescriptors()) {
         post("<== Parameter %d ==>", parameterIndex);
@@ -68,7 +68,7 @@ static void GetParameterDescriptors(PdVamp *x) {
 }
 
 // ─────────────────────────────────────
-static void GetProgramsNames(PdVamp *x) {
+static void vamp_getprograms(PdVamp *x) {
     size_t programIndex = 0;
     for (auto &&p : x->VampPlugin->getPrograms()) {
         post("<== Program %d ==>", programIndex);
@@ -84,7 +84,7 @@ static void GetProgramsNames(PdVamp *x) {
 }
 
 // ─────────────────────────────────────
-static void ListVampPlugins(PdVamp *x) {
+static void vamp_listplugins(PdVamp *x) {
     for (auto &&lib : listLibraries()) {
         for (auto &&key : listPlugins(lib)) {
             std::string Id = key.get().data();
@@ -106,10 +106,6 @@ static void ListVampPlugins(PdVamp *x) {
 static void VampTick(PdVamp *x) {
     if (x->OutputCount == 0) {
         return;
-    } else if (x->OutputCount > 1) {
-        pd_error(nullptr, "More than one output, use [vamp~ %s] to get the output",
-                 x->VampPlugin->getIdentifier().data());
-        return;
     } else {
         int Len = x->Features[0].size();
         if (Len == 0) {
@@ -129,7 +125,7 @@ static void VampTick(PdVamp *x) {
 }
 
 // ─────────────────────────────────────
-static t_int *VampAudioPerform(t_int *w) { //
+static t_int *vamp_perform(t_int *w) { //
     PdVamp *x = (PdVamp *)(w[1]);
     t_sample *in = (t_sample *)(w[2]);
     int n = static_cast<int>(w[3]);
@@ -168,10 +164,10 @@ static t_int *VampAudioPerform(t_int *w) { //
 }
 
 // ─────────────────────────────────────
-static void PdVampAddDsp(PdVamp *x, t_signal **sp) {
+static void vamp_dsp(PdVamp *x, t_signal **sp) {
     x->BlockIndex = 0;
     x->inBuffer.resize(x->StepSize, 0.0f);
-    dsp_add(VampAudioPerform, 3, x, sp[0]->s_vec, sp[0]->s_n);
+    dsp_add(vamp_perform, 3, x, sp[0]->s_vec, sp[0]->s_n);
 }
 
 // ─────────────────────────────────────
@@ -182,7 +178,7 @@ static void PdVampFree(PdVamp *x, t_signal **sp) {
 }
 
 // ─────────────────────────────────────
-void *PdVampNew(t_symbol *s, int argc, t_atom *argv) {
+void *vamp_new(t_symbol *s, int argc, t_atom *argv) {
     PdVamp *x = (PdVamp *)pd_new(VampObj);
     x->Sr = sys_getsr();
     x->Clock = clock_new(x, (t_method)VampTick);
@@ -198,7 +194,7 @@ void *PdVampNew(t_symbol *s, int argc, t_atom *argv) {
     // check if 1 and 2 are symbols
     if (argc != 1) {
         pd_error(nullptr, "[vamp~] Wrong number of arguments: [vamp~ <plugin-id>]");
-        post("Use plugins message to list available plugins");
+        post("Use [plugins] method to list available plugins");
         return x;
     }
     if (argv[0].a_type != A_SYMBOL) {
@@ -234,11 +230,11 @@ void *PdVampNew(t_symbol *s, int argc, t_atom *argv) {
 
 // ─────────────────────────────────────
 extern "C" void vamp_tilde_setup(void) {
-    VampObj = class_new(gensym("vamp~"), (t_newmethod)PdVampNew, nullptr, sizeof(PdVamp),
+    VampObj = class_new(gensym("vamp~"), (t_newmethod)vamp_new, nullptr, sizeof(PdVamp),
                         CLASS_DEFAULT, A_GIMME, A_NULL);
     CLASS_MAINSIGNALIN(VampObj, PdVamp, Sample);
-    class_addmethod(VampObj, (t_method)ListVampPlugins, gensym("plugins"), A_NULL);
-    class_addmethod(VampObj, (t_method)GetParameterDescriptors, gensym("parameters"), A_NULL);
-    class_addmethod(VampObj, (t_method)GetProgramsNames, gensym("program"), A_NULL);
-    class_addmethod(VampObj, (t_method)PdVampAddDsp, gensym("dsp"), A_CANT, 0);
+    class_addmethod(VampObj, (t_method)vamp_listplugins, gensym("plugins"), A_NULL);
+    class_addmethod(VampObj, (t_method)vamp_getparameters, gensym("parameters"), A_NULL);
+    class_addmethod(VampObj, (t_method)vamp_getprograms, gensym("program"), A_NULL);
+    class_addmethod(VampObj, (t_method)vamp_dsp, gensym("dsp"), A_CANT, 0);
 }
