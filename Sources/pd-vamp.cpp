@@ -4,14 +4,14 @@
 #include <fftw3.h>
 #include <rtvamp/hostsdk.hpp>
 
-static t_class *VampObj;
+static t_class *vamp_class;
 
 using namespace rtvamp::hostsdk;
 using FrequencyDomainBuffer = std::vector<const std::complex<float>>;
 using TimeDomainBuffer = std::span<const float>;
 
 // ─────────────────────────────────────
-class PdVamp {
+class vamp_tilde {
   public:
     t_object x_obj;
     t_sample Sample;
@@ -44,7 +44,7 @@ class PdVamp {
 };
 
 // ─────────────────────────────────────
-static void vamp_getparameters(PdVamp *x) {
+static void vamp_getparameters(vamp_tilde *x) {
     size_t parameterIndex = 0;
     for (auto &&p : x->VampPlugin->getParameterDescriptors()) {
         post("<== Parameter %d ==>", parameterIndex);
@@ -68,7 +68,34 @@ static void vamp_getparameters(PdVamp *x) {
 }
 
 // ─────────────────────────────────────
-static void vamp_getprograms(PdVamp *x) {
+static void vamp_setparameters(vamp_tilde *x, t_symbol *s, int argc, t_atom *argv) {
+    if (argc == 0) {
+        pd_error(nullptr, "[vamp~] Wrong number of arguments: [vamp~ set <parameter> <value>]");
+        return;
+    }
+    if (argv[0].a_type != A_SYMBOL) {
+        pd_error(nullptr, "[vamp~] First argument must be a symbol");
+        return;
+    }
+    if (argc == 1) {
+        pd_error(nullptr, "[vamp~] Wrong number of arguments: [vamp~ set <parameter> <value>]");
+        return;
+    }
+    if (argv[1].a_type != A_FLOAT) {
+        pd_error(nullptr, "[vamp~] Second argument must be a float");
+        return;
+    }
+    std::string Parameter = atom_getsymbol(argv)->s_name;
+    float Value = atom_getfloat(argv + 1);
+    if (!x->VampPlugin->setParameter(Parameter, Value)) {
+        pd_error(x, "[vamp~] Invalid parameter");
+    } else {
+        post("Parameter %s set to %f", Parameter.c_str(), x->VampPlugin->getParameter(Parameter));
+    }
+}
+
+// ─────────────────────────────────────
+static void vamp_getprograms(vamp_tilde *x) {
     size_t programIndex = 0;
     for (auto &&p : x->VampPlugin->getPrograms()) {
         post("<== Program %d ==>", programIndex);
@@ -84,7 +111,7 @@ static void vamp_getprograms(PdVamp *x) {
 }
 
 // ─────────────────────────────────────
-static void vamp_listplugins(PdVamp *x) {
+static void vamp_listplugins(vamp_tilde *x) {
     for (auto &&lib : listLibraries()) {
         for (auto &&key : listPlugins(lib)) {
             std::string Id = key.get().data();
@@ -103,30 +130,25 @@ static void vamp_listplugins(PdVamp *x) {
 }
 
 // ─────────────────────────────────────
-static void VampTick(PdVamp *x) {
+static void vamp_tick(vamp_tilde *x) {
     if (x->OutputCount == 0) {
         return;
     } else {
-        int Len = x->Features[0].size();
-        if (Len == 0) {
-            return;
-        } else if (Len == 1) {
-            outlet_float(x->Analisys, x->Features[0][0]);
-        } else {
-            t_atom a[Len];
-            for (int j = 0; j < Len; j++) {
-                SETFLOAT(&a[j], x->Features[0][j]);
+        int featureCount = x->Features.size();
+        for (int i = 0; i < featureCount; i++) {
+            t_atom a[x->Outputs[i].binCount];
+            for (int j = 0; j < x->Outputs[i].binCount; j++) {
+                SETFLOAT(&a[j], x->Features[i][j]);
             }
-            outlet_list(x->Analisys, nullptr, Len, a);
+            outlet_list(x->Analisys, nullptr, x->Outputs[i].binCount, a);
         }
     }
-
     return;
 }
 
 // ─────────────────────────────────────
 static t_int *vamp_perform(t_int *w) { //
-    PdVamp *x = (PdVamp *)(w[1]);
+    vamp_tilde *x = (vamp_tilde *)(w[1]);
     t_sample *in = (t_sample *)(w[2]);
     int n = static_cast<int>(w[3]);
 
@@ -151,11 +173,19 @@ static t_int *vamp_perform(t_int *w) { //
         for (int i = 0; i < x->StepSize; i++) {
             FFT[i] = std::complex<float>(x->FFTOut[i][0], x->FFTOut[i][1]);
         }
-        x->Features = x->VampPlugin->process(FFT, 0);
+        try {
+            x->Features = x->VampPlugin->process(FFT, 0);
+        } catch (const std::exception &e) {
+            pd_error(x, "[vamp~] Plugin Probably not supported: %s", e.what());
+        }
 
     } else {
         TimeDomainBuffer TimeBuffer(x->inBuffer.data(), x->inBuffer.size());
-        x->Features = x->VampPlugin->process(TimeBuffer, 0);
+        try {
+            x->Features = x->VampPlugin->process(TimeBuffer, 0);
+        } catch (const std::exception &e) {
+            pd_error(x, "[vamp~] Plugin Probably not supported: %s", e.what());
+        }
     }
 
     x->BlockIndex = 0;
@@ -164,14 +194,14 @@ static t_int *vamp_perform(t_int *w) { //
 }
 
 // ─────────────────────────────────────
-static void vamp_dsp(PdVamp *x, t_signal **sp) {
+static void vamp_dsp(vamp_tilde *x, t_signal **sp) {
     x->BlockIndex = 0;
     x->inBuffer.resize(x->StepSize, 0.0f);
     dsp_add(vamp_perform, 3, x, sp[0]->s_vec, sp[0]->s_n);
 }
 
 // ─────────────────────────────────────
-static void PdVampFree(PdVamp *x, t_signal **sp) {
+static void PdVampFree(vamp_tilde *x, t_signal **sp) {
     fftwf_destroy_plan(x->FFTPlan);
     fftwf_free(x->FFTIn);
     fftwf_free(x->FFTOut);
@@ -179,9 +209,9 @@ static void PdVampFree(PdVamp *x, t_signal **sp) {
 
 // ─────────────────────────────────────
 void *vamp_new(t_symbol *s, int argc, t_atom *argv) {
-    PdVamp *x = (PdVamp *)pd_new(VampObj);
+    vamp_tilde *x = (vamp_tilde *)pd_new(vamp_class);
     x->Sr = sys_getsr();
-    x->Clock = clock_new(x, (t_method)VampTick);
+    x->Clock = clock_new(x, (t_method)vamp_tick);
     x->BlockIndex = 0;
     x->StepSize = 1024;
     x->BlockSize = 1024;
@@ -193,7 +223,7 @@ void *vamp_new(t_symbol *s, int argc, t_atom *argv) {
 
     // check if 1 and 2 are symbols
     if (argc != 1) {
-        pd_error(nullptr, "[vamp~] Wrong number of arguments: [vamp~ <plugin-id>]");
+        pd_error(x, "[vamp~] Wrong number of arguments: [vamp~ <plugin-id>]");
         post("Use [plugins] method to list available plugins");
         return x;
     }
@@ -218,6 +248,11 @@ void *vamp_new(t_symbol *s, int argc, t_atom *argv) {
         pd_error(nullptr, "Error loading plugin %s: %s", PluginId.c_str(), e.what());
         return nullptr;
     }
+    //
+    logpost(x, 3, "PreferredStepSize is %d", x->VampPlugin->getPreferredStepSize());
+    logpost(x, 3, "getPreferredBlockSize is %d", x->VampPlugin->getPreferredBlockSize());
+
+    // Get Outputs
     x->OutputCount = x->VampPlugin->getOutputCount();
     x->Outputs = x->VampPlugin->getOutputDescriptors();
     if (x->OutputCount == 0) {
@@ -230,11 +265,12 @@ void *vamp_new(t_symbol *s, int argc, t_atom *argv) {
 
 // ─────────────────────────────────────
 extern "C" void vamp_tilde_setup(void) {
-    VampObj = class_new(gensym("vamp~"), (t_newmethod)vamp_new, nullptr, sizeof(PdVamp),
-                        CLASS_DEFAULT, A_GIMME, A_NULL);
-    CLASS_MAINSIGNALIN(VampObj, PdVamp, Sample);
-    class_addmethod(VampObj, (t_method)vamp_listplugins, gensym("plugins"), A_NULL);
-    class_addmethod(VampObj, (t_method)vamp_getparameters, gensym("parameters"), A_NULL);
-    class_addmethod(VampObj, (t_method)vamp_getprograms, gensym("program"), A_NULL);
-    class_addmethod(VampObj, (t_method)vamp_dsp, gensym("dsp"), A_CANT, 0);
+    vamp_class = class_new(gensym("vamp~"), (t_newmethod)vamp_new, nullptr, sizeof(vamp_tilde),
+                           CLASS_DEFAULT, A_GIMME, A_NULL);
+    CLASS_MAINSIGNALIN(vamp_class, vamp_tilde, Sample);
+    class_addmethod(vamp_class, (t_method)vamp_listplugins, gensym("plugins"), A_NULL);
+    class_addmethod(vamp_class, (t_method)vamp_getparameters, gensym("parameters"), A_NULL);
+    class_addmethod(vamp_class, (t_method)vamp_setparameters, gensym("set"), A_GIMME, A_NULL);
+    class_addmethod(vamp_class, (t_method)vamp_getprograms, gensym("program"), A_NULL);
+    class_addmethod(vamp_class, (t_method)vamp_dsp, gensym("dsp"), A_CANT, 0);
 }
